@@ -3,30 +3,34 @@ import polyline
 import numpy as np
 import joblib
 import os
+import streamlit as st
+import time
 
 
 # -----------------------------
 # Load ML Model Safely
 # -----------------------------
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
 MODEL_PATH = os.path.join(BASE_DIR, "ml_model", "co2_emission_model.pkl")
 
 model = joblib.load(MODEL_PATH)
 
 
 # -----------------------------
-# Convert place name → coordinates
+# Convert place name → coordinates (CACHED)
 # -----------------------------
+@st.cache_data
 def get_coordinates(place):
 
     url = f"https://nominatim.openstreetmap.org/search?q={place}&format=json"
 
     try:
+        time.sleep(1)  # prevent API blocking
+
         response = requests.get(
             url,
             headers={"User-Agent": "carbon-route-ai"},
-            timeout=5   # 👈 ADD THIS
+            timeout=10
         )
 
         data = response.json()
@@ -37,15 +41,16 @@ def get_coordinates(place):
         lat = data[0]["lat"]
         lon = data[0]["lon"]
 
-        return lon + "," + lat
+        return f"{lon},{lat}"
 
     except:
-        return None   # 👈 prevents crash
+        return None
 
 
 # -----------------------------
-# Get Routes from OSRM
+# Get Routes from OSRM (CACHED + SAFE)
 # -----------------------------
+@st.cache_data
 def get_routes(source, destination):
 
     src = get_coordinates(source)
@@ -54,20 +59,49 @@ def get_routes(source, destination):
     if src is None or dest is None:
         return None
 
-    url = f"http://router.project-osrm.org/route/v1/driving/{src};{dest}?alternatives=true&overview=full&geometries=polyline"
+    url = f"https://router.project-osrm.org/route/v1/driving/{src};{dest}?alternatives=true&overview=full&geometries=polyline"
+    
+    print("SRC:", src)
+    print("DEST:", dest)
+    print("URL:", url)
 
-    response = requests.get(url, headers={"User-Agent": "carbon-route-ai"}, timeout=5)
+    # 🔥 SAFE REQUEST WITH RETRY
+    data = None
 
-    data = response.json()
+    for _ in range(3):  # more retries
+        try:
+            response = requests.get(
+                url,
+                headers={"User-Agent": "carbon-route-ai"},
+                timeout=15
+            )
 
-    if "routes" not in data:
+            if response.status_code != 200:
+                print("❌ OSRM Status:", response.status_code)
+                time.sleep(1)
+                continue
+
+            data = response.json()
+
+            # check valid response
+            if "routes" in data and len(data["routes"]) > 0:
+                break
+            else:
+                print("❌ No routes in response")
+                data = None
+
+        except Exception as e:
+            print("❌ OSRM Exception:", e)
+            time.sleep(1)
+            data = None
+
+    if not data or "routes" not in data:
         return None
 
     routes = data["routes"]
 
     routes_data = []
 
-    # mode encoding (same as ML training)
     mode_map = {
         "car": 0,
         "bike": 1,
@@ -80,10 +114,9 @@ def get_routes(source, destination):
     for i, route in enumerate(routes):
 
         distance_km = route["distance"] / 1000
-
         duration_min = route["duration"] / 60
 
-        # Estimate traffic from travel time
+        # traffic estimation
         if duration_min < 10:
             traffic = 1
         elif duration_min < 20:
@@ -104,7 +137,6 @@ def get_routes(source, destination):
                 "co2": co2
             })
 
-        # decode route geometry for map
         coordinates = polyline.decode(route["geometry"])
 
         routes_data.append({
@@ -115,6 +147,5 @@ def get_routes(source, destination):
             "modes": mode_results,
             "coordinates": coordinates
         })
-        print("routes_api loaded successfully")
 
     return routes_data

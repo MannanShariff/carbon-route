@@ -49,14 +49,23 @@ if "routes" not in st.session_state:
 
 
 # ✅ FUNCTION
+@st.cache_data
 def get_lat_lon(place):
     try:
         url = f"https://nominatim.openstreetmap.org/search?q={place}&format=json"
-        res = requests.get(url, headers={"User-Agent": "carbon-route-ai"}, timeout=5).json()
+
+        res = requests.get(
+            url,
+            headers={"User-Agent": "carbon-route-ai"},
+            timeout=8
+        ).json()
+
         if len(res) > 0:
             return float(res[0]["lat"]), float(res[0]["lon"])
+
     except:
         return None
+
     return None
 
 
@@ -68,29 +77,103 @@ st.markdown("---")
 
 # 🔍 SOURCE
 source_query = st.text_input("Search Source")
-source = None
-if source_query:
-    res = requests.get(
-        f"https://nominatim.openstreetmap.org/search?q={source_query}&format=json",
-        headers={"User-Agent": "carbon-route-ai"}
-    ).json()
-    options = [p["display_name"] for p in res[:5]]
-    if options:
-        source = st.selectbox("Select Source", options)
+
+if "source_options" not in st.session_state:
+    st.session_state.source_options = []
+
+if "source_selected" not in st.session_state:
+    st.session_state.source_selected = None
+
+col1, col2 = st.columns([3,1])
+
+with col1:
+    pass
+
+with col2:
+    if st.button("🔍 Search Source"):
+        try:
+            import time
+            time.sleep(1)  # prevent API blocking
+
+            res = requests.get(
+                f"https://nominatim.openstreetmap.org/search?q={source_query}&format=json&limit=5",
+                headers={
+                    "User-Agent": "carbon-route-ai",
+                    "Accept-Language": "en"
+                },
+                timeout=8
+            )
+
+            if res.status_code == 200:
+                data = res.json()
+                st.session_state.source_options = [p["display_name"] for p in data]
+            else:
+                st.session_state.source_options = []
+
+        except:
+            st.warning("⚠️ Network issue. Try again.")
+            st.session_state.source_options = []
+
+# dropdown
+if st.session_state.source_options:
+    st.session_state.source_selected = st.selectbox(
+    "Select Source",
+    st.session_state.source_options,
+    key="src_select"
+)
+
+source = st.session_state.source_selected
 
 st.markdown("---")
 
 # 🔍 DESTINATION
 dest_query = st.text_input("Search Destination")
-destination = None
-if dest_query:
-    res = requests.get(
-        f"https://nominatim.openstreetmap.org/search?q={dest_query}&format=json",
-        headers={"User-Agent": "carbon-route-ai"}
-    ).json()
-    options = [p["display_name"] for p in res[:5]]
-    if options:
-        destination = st.selectbox("Select Destination", options)
+
+if "dest_options" not in st.session_state:
+    st.session_state.dest_options = []
+
+if "dest_selected" not in st.session_state:
+    st.session_state.dest_selected = None
+
+col3, col4 = st.columns([3,1])
+
+with col3:
+    pass
+
+with col4:
+    if st.button("🔍 Search Destination"):
+        try:
+            import time
+            time.sleep(1)
+
+            res = requests.get(
+                f"https://nominatim.openstreetmap.org/search?q={dest_query}&format=json&limit=5",
+                headers={
+                    "User-Agent": "carbon-route-ai",
+                    "Accept-Language": "en"
+                },
+                timeout=8
+            )
+
+            if res.status_code == 200:
+                data = res.json()
+                st.session_state.dest_options = [p["display_name"] for p in data]
+            else:
+                st.session_state.dest_options = []
+
+        except:
+            st.warning("⚠️ Network issue. Try again.")
+            st.session_state.dest_options = []
+
+# dropdown
+if st.session_state.dest_options:
+    st.session_state.dest_selected = st.selectbox(
+    "Select Destination",
+    st.session_state.dest_options,
+    key="dest_select"
+)
+
+destination = st.session_state.dest_selected
 
 st.markdown("---")
 
@@ -121,13 +204,30 @@ if source and destination:
 
 st.markdown("---")
 
+st.write("DEBUG Source:", st.session_state.get("source_selected"))
+st.write("DEBUG Dest:", st.session_state.get("dest_selected"))
+
 # 🚀 BUTTON
 if st.button("🚀 Find Eco Routes"):
+
+    # Always fetch latest values from session
+    source = st.session_state.get("source_selected")
+    destination = st.session_state.get("dest_selected")
+
     if not source or not destination:
-        st.warning("Select both locations")
+        st.warning("⚠️ Please select source and destination from dropdown")
     else:
-        with st.spinner("Calculating..."):
-            st.session_state.routes = get_routes(source, destination)
+        try:
+            with st.spinner("Finding best eco routes... 🌍"):
+                routes = get_routes(source, destination)
+
+            if not routes:
+                st.error("❌ Could not fetch routes. Try again.")
+            else:
+                st.session_state.routes = routes
+
+        except Exception as e:
+            st.error("❌ Network error while fetching routes")
 
 st.markdown("---")
 

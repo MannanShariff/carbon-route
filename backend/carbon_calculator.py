@@ -10,4 +10,4 @@ emission_factors = {
 def calculate_co2(distance_km, mode):
     factor = emission_factors.get(mode, 0)
     co2 = distance_km * factor
-    return co2 / 1000
+    return co2 / 1000   
